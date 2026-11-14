@@ -157,7 +157,7 @@ Window {
                   app: at(best, "app_name") || at(best, "source") || "",
                   name: at(best, "friendly_name") || "",
                   art: pic ? (pic.indexOf("http") === 0 ? pic : haHttp + pic) : "",
-                  video: (at(best, "media_content_type") || "") !== "music" && !!at(best, "app_name") && !artist,
+                  video: at(best, "media_content_type") ? at(best, "media_content_type") !== "music" : (!!at(best, "app_name") && !artist),
                   feat: at(best, "supported_features") || 0,
                   vol: at(best, "volume_level"),
                   pos: at(best, "media_position"), posAt: at(best, "media_position_updated_at") || "",
