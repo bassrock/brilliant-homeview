@@ -27,7 +27,9 @@ Window {
         "package-variant-closed":"F03D7","mailbox":"F06EE","truck-delivery":"F053E","washing-machine":"F072A","tumble-dryer":"F0917","check-circle":"F05E0","dishwasher":"F0AAC","garage-open":"F06DA","door-open":"F081C",
         "weather-fog":"F0591","weather-cloudy":"F0590","weather-partly-cloudy":"F0595","weather-sunny":"F0599","weather-night":"F0594",
         "weather-rainy":"F0597","weather-pouring":"F0596","weather-snowy":"F0598","weather-snowy-rainy":"F067F","weather-windy":"F059D",
-        "weather-windy-variant":"F059E","weather-lightning":"F0593","weather-lightning-rainy":"F067E","weather-hail":"F0592"})
+        "weather-windy-variant":"F059E","weather-lightning":"F0593","weather-lightning-rainy":"F067E","weather-hail":"F0592",
+        "play":"F040A","pause":"F03E4","skip-next":"F04AD","skip-previous":"F04AE","volume-high":"F057E","volume-minus":"F075E",
+        "volume-plus":"F075D","music":"F075A","television-play":"F0ECF","speaker":"F04C3"})
     function ic(n) { return String.fromCodePoint(parseInt(icons[n] || "F0590", 16)) }
     readonly property var cond: ({"fog":"Foggy","cloudy":"Cloudy","partlycloudy":"Partly Cloudy","sunny":"Sunny","clear-night":"Clear",
         "rainy":"Rain","pouring":"Heavy Rain","snowy":"Snow","snowy-rainy":"Snow","windy":"Windy","windy-variant":"Windy",
@@ -54,6 +56,15 @@ Window {
     // slider touches to Linux once it goes idle, so the on-screen indicator follows
     // these lights' real brightness (plus the raw touch stream whenever it does report).
     readonly property var sliderLights: cfg("SLIDER_LIGHTS", [])
+    // Sliders Brilliant doesn't drive (unassigned in the Brilliant app) can be driven by
+    // HomeView itself: index-aligned with SLIDERS, e.g. [null, {entity: "light.x"},
+    // {entity: "fan.y", steps: [0, 33, 66, 100]}]. Lights dim 0-100; fans snap to steps.
+    readonly property var sliderCtl: cfg("SLIDER_CONTROL", [])
+    function ctlFor(i) { return (i < sliderNames.length && sliderCtl[i] && sliderCtl[i].entity) ? sliderCtl[i] : null }
+    function sliderEnt(i) { var c = ctlFor(i); return c ? c.entity : (sliderLights[i] || "") }
+    // Now Playing: media players for this room, in priority order (first one playing wins).
+    readonly property var mediaPlayers: cfg("MEDIA", [])
+    readonly property string haHttp: cfg("HTTP", String(Cfg.WS).replace(/^ws/, "http").replace(/\/api\/websocket$/, ""))
     readonly property var ents: {
         var e = [weatherEntity]
         if (photoVersionEntity) e.push(photoVersionEntity)
@@ -63,6 +74,8 @@ Window {
         for (var i = 0; i < locks.length; i++) add(locks[i][0])
         for (var j = 0; j < arrivingSensors.length; j++) add(arrivingSensors[j])
         for (var k = 0; k < sliderLights.length; k++) add(sliderLights[k])
+        for (var q = 0; q < sliderCtl.length; q++) if (sliderCtl[q]) add(sliderCtl[q].entity)
+        for (var mp = 0; mp < mediaPlayers.length; mp++) add(mediaPlayers[mp])
         for (var d = 0; d < doneAlerts.length; d++) add(doneAlerts[d].entity)
         return e
     }
@@ -81,7 +94,8 @@ Window {
     property var openLocks: []
     property string boxLock: "unknown"
     property bool boxInside: false
-    property string card: ""        // "" | "locks" | "box"
+    property string card: ""        // "" | "locks" | "box" | "media"
+    property var np: null           // the room's now-playing media (see recompute)
     function call(domain, service, data) {
         ws.sendTextMessage(JSON.stringify({ id: ++msgId, type: "call_service", domain: domain, service: service, service_data: data }))
     }
@@ -124,6 +138,33 @@ Window {
             if ((al.states || ["on"]).indexOf(v(al.entity)) >= 0) out.push({ icon: al.icon || "check-circle", color: al.color || "#30D158", text: al.text })
         }
         if (JSON.stringify(out) !== JSON.stringify(chips)) chips = out
+
+        var best = null, bestScore = 0
+        for (var p = 0; p < mediaPlayers.length; p++) {
+            var me = mediaPlayers[p], ms = v(me)
+            var title = at(me, "media_title") || ""
+            var score = ms === "playing" ? 2 : (ms === "paused" ? 1 : 0)
+            if (score > bestScore && (title || at(me, "app_name"))) { best = me; bestScore = score }
+        }
+        var n = null
+        if (best) {
+            var pic = at(best, "entity_picture") || ""
+            var artist = at(best, "media_artist") || at(best, "media_series_title") || ""
+            var album = at(best, "media_album_name") || ""
+            n = { id: best, playing: v(best) === "playing",
+                  title: at(best, "media_title") || at(best, "app_name") || "",
+                  sub: [artist, album].filter(function (x) { return x }).join(" \u2014 "),
+                  app: at(best, "app_name") || at(best, "source") || "",
+                  name: at(best, "friendly_name") || "",
+                  art: pic ? (pic.indexOf("http") === 0 ? pic : haHttp + pic) : "",
+                  video: (at(best, "media_content_type") || "") !== "music" && !!at(best, "app_name") && !artist,
+                  feat: at(best, "supported_features") || 0,
+                  vol: at(best, "volume_level"),
+                  pos: at(best, "media_position"), posAt: at(best, "media_position_updated_at") || "",
+                  dur: at(best, "media_duration") }
+        }
+        if (JSON.stringify(n) !== JSON.stringify(np)) np = n
+        if (!np && card === "media") card = ""
     }
 
     function tick() {
@@ -161,16 +202,18 @@ Window {
         if (ev.a) for (k in ev.a) st[k] = { s: ev.a[k].s, a: ev.a[k].a || {} }
         if (ev.c) for (k in ev.c) {
             var cur = st[k] || { s: undefined, a: {} }, ch = ev.c[k]
-            var wasOn = cur.s, wasBri = cur.a ? cur.a.brightness : undefined
+            var wasOn = cur.s, wasBri = cur.a ? cur.a.brightness : undefined, wasPct = cur.a ? cur.a.percentage : undefined
             if (ch["+"]) {
                 if (ch["+"].s !== undefined) cur.s = ch["+"].s
                 if (ch["+"].a) for (var ak in ch["+"].a) cur.a[ak] = ch["+"].a[ak]
             }
             st[k] = cur
-            var li = sliderLights.indexOf(k)
-            if (li >= 0 && (cur.s !== wasOn || cur.a.brightness !== wasBri) && !sliderActive && Date.now() - lastFinger > 5000) {
+            var li = -1
+            for (var si = 0; si < sliderNames.length; si++) if (sliderEnt(si) === k) li = si
+            var lvlKey = k.indexOf("fan.") === 0 ? "percentage" : "brightness"
+            if (li >= 0 && (cur.s !== wasOn || cur.a[lvlKey] !== (lvlKey === "brightness" ? wasBri : wasPct)) && !sliderActive && Date.now() - lastFinger > 5000) {
                 sliderIdx = li
-                sliderLevel = cur.s === "on" ? Math.round((cur.a.brightness || 255) * 100 / 255) : 0
+                sliderLevel = cur.s !== "on" ? 0 : (lvlKey === "percentage" ? (cur.a.percentage || 0) : Math.round((cur.a.brightness || 255) * 100 / 255))
                 hudLinger.restart()
             }
         }
@@ -213,6 +256,41 @@ Window {
                 gl_FragColor = vec4(mix(c, vec3(1.0), edge) * al, al);
             }"
     }
+    // Artwork: cover-cropped into a rounded rectangle (the Image itself stays invisible).
+    component Art: Item {
+        id: artItem
+        property string src: ""
+        property real radius: 24
+        property string fallback: "music"
+        Rectangle { anchors.fill: parent; radius: artItem.radius; color: "#33FFFFFF"; visible: artImg.status !== Image.Ready
+            Ico { anchors.centerIn: parent; name: artItem.fallback; font.pixelSize: Math.min(artItem.width, artItem.height) * 0.42; opacity: 0.85 } }
+        Image { id: artImg; source: artItem.src; asynchronous: true; opacity: 0; width: 1; height: 1
+                sourceSize.width: 512; sourceSize.height: 512 }
+        ShaderEffect {
+            anchors.fill: parent
+            visible: artImg.status === Image.Ready
+            property variant src: artImg
+            property size sz: Qt.size(width, height)
+            property size isz: Qt.size(Math.max(1, artImg.implicitWidth), Math.max(1, artImg.implicitHeight))
+            property real radius: artItem.radius
+            fragmentShader: "
+                varying highp vec2 qt_TexCoord0;
+                uniform sampler2D src;
+                uniform lowp float qt_Opacity;
+                uniform highp vec2 sz;
+                uniform highp vec2 isz;
+                uniform highp float radius;
+                void main() {
+                    highp vec2 p = qt_TexCoord0 * sz;
+                    highp float k = max(sz.x / isz.x, sz.y / isz.y);
+                    highp vec2 disp = isz * k;
+                    lowp vec4 c = texture2D(src, (p + (disp - sz) * 0.5) / disp);
+                    highp vec2 q = abs(p - sz * 0.5) - (sz * 0.5 - vec2(radius));
+                    highp float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+                    gl_FragColor = c * clamp(0.5 - d, 0.0, 1.0) * qt_Opacity;
+                }"
+        }
+    }
     component T: Text { font.family: "Inter"; color: "white"; font.pixelSize: 28; font.weight: Font.Medium }
     component Ico: Text { property string name: ""; text: root.ic(name); font.family: mdiFont.name; font.pixelSize: 40; color: "white" }
 
@@ -235,6 +313,31 @@ Window {
         anchors.bottom: cap.top
         anchors.bottomMargin: 20
         spacing: 16
+        // Now Playing: what this room's Apple TV / Sonos is playing. Tap for controls.
+        Item {
+            id: npPill
+            visible: !!root.np
+            width: 640; height: 136
+            Glass { width: parent.width; height: parent.height; radius: 40
+                    origin: Qt.point(chipCol.x + npPill.x, chipCol.y + npPill.y) }
+            MouseArea { anchors.fill: parent; onClicked: { root.card = "media"; cardTimer.restart() } }
+            Art { x: 20; y: 20; width: 96; height: 96; radius: 20; src: root.np ? root.np.art : ""
+                  fallback: root.np && root.np.video ? "television-play" : "music" }
+            Column {
+                x: 136; anchors.verticalCenter: parent.verticalCenter; width: 640 - 136 - 124; spacing: 2
+                T { width: parent.width; elide: Text.ElideRight; font.pixelSize: 30; font.weight: Font.DemiBold
+                    text: root.np ? root.np.title : "" }
+                T { width: parent.width; elide: Text.ElideRight; font.pixelSize: 22; opacity: 0.82
+                    text: root.np ? (root.np.sub || root.np.app || root.np.name) : "" }
+            }
+            Rectangle {
+                width: 88; height: 88; radius: 44; x: 640 - 108; anchors.verticalCenter: parent.verticalCenter
+                color: "#EDFFFFFF"
+                Ico { anchors.centerIn: parent; name: root.np && root.np.playing ? "pause" : "play"; color: "#1c1c1e"; font.pixelSize: 48 }
+                MouseArea { anchors.fill: parent; anchors.margins: -12
+                            onClicked: root.call("media_player", "media_play_pause", { entity_id: root.np.id }) }
+            }
+        }
         Repeater {
             model: root.chips
             Item {
@@ -279,7 +382,7 @@ Window {
     }
     Item {
         anchors.fill: parent
-        visible: root.card !== ""
+        visible: root.card !== "" && root.card !== "media"
         Rectangle { anchors.fill: parent; color: "#8C000000" }
         MouseArea { anchors.fill: parent; onClicked: root.card = "" }
         Item {
@@ -310,6 +413,96 @@ Window {
         }
     }
 
+    // ------------------------------------------------------------ Now Playing card
+    property real nowMs: Date.now()
+    Timer { interval: 1000; repeat: true; running: root.card === "media" && !!root.np && root.np.playing; onTriggered: root.nowMs = Date.now() }
+    function npPos() {
+        if (!np || np.pos === undefined || np.pos === null || !np.dur) return -1
+        var p = np.pos
+        if (np.playing && np.posAt) p += Math.max(0, (nowMs - Date.parse(np.posAt)) / 1000)
+        return Math.min(p, np.dur)
+    }
+    function fmt(t) {
+        t = Math.max(0, Math.floor(t)); var h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60
+        return (h ? h + ":" + (m < 10 ? "0" : "") : "") + m + ":" + (sec < 10 ? "0" : "") + sec
+    }
+    property real volPreview: -1
+    component RoundBtn: Rectangle {
+        property string icon: ""
+        property bool primary: false
+        signal tapped()
+        width: primary ? 132 : 104; height: width; radius: width / 2
+        color: primary ? "#EDFFFFFF" : "#29FFFFFF"; border.width: primary ? 0 : 1; border.color: "#40FFFFFF"
+        Ico { anchors.centerIn: parent; name: parent.icon; font.pixelSize: parent.primary ? 70 : 52; color: parent.primary ? "#1c1c1e" : "white" }
+        MouseArea { anchors.fill: parent; onClicked: { parent.tapped(); cardTimer.restart() } }
+    }
+    Item {
+        anchors.fill: parent
+        visible: root.card === "media" && !!root.np
+        Rectangle { anchors.fill: parent; color: "#8C000000" }
+        MouseArea { anchors.fill: parent; onClicked: root.card = "" }
+        Item {
+            id: mediaBox
+            x: 32; width: 656; height: mediaCol.implicitHeight + 72
+            anchors.verticalCenter: parent.verticalCenter
+            Glass { width: parent.width; height: parent.height; radius: 52; origin: Qt.point(mediaBox.x, mediaBox.y) }
+            MouseArea { anchors.fill: parent }
+            Column {
+                id: mediaCol
+                x: 36; y: 36; width: parent.width - 72; spacing: 22
+                Art { anchors.horizontalCenter: parent.horizontalCenter; radius: 34
+                      width: root.np && root.np.video ? 584 : 460; height: root.np && root.np.video ? 328 : 460
+                      src: root.np ? root.np.art : ""; fallback: root.np && root.np.video ? "television-play" : "music" }
+                Column { width: parent.width; spacing: 4
+                    T { width: parent.width; elide: Text.ElideRight; font.pixelSize: 40; font.weight: Font.DemiBold; text: root.np ? root.np.title : "" }
+                    T { width: parent.width; elide: Text.ElideRight; font.pixelSize: 28; opacity: 0.82; visible: text !== ""; text: root.np ? root.np.sub : "" }
+                    T { width: parent.width; elide: Text.ElideRight; font.pixelSize: 22; opacity: 0.6
+                        text: root.np ? [root.np.name, root.np.app].filter(function (x) { return x }).join("  \u00B7  ") : "" } }
+                Column { width: parent.width; spacing: 8; visible: root.npPos() >= 0
+                    Rectangle { width: parent.width; height: 8; radius: 4; color: "#40FFFFFF"
+                        Rectangle { height: parent.height; radius: 4; color: "#F2FFFFFF"
+                                    width: root.np && root.np.dur ? parent.width * Math.max(0, root.npPos()) / root.np.dur : 0 } }
+                    Item { width: parent.width; height: 26
+                        T { font.pixelSize: 20; opacity: 0.7; text: root.fmt(root.npPos()) }
+                        T { anchors.right: parent.right; font.pixelSize: 20; opacity: 0.7; text: root.np && root.np.dur ? "-" + root.fmt(root.np.dur - root.npPos()) : "" } } }
+                Row { anchors.horizontalCenter: parent.horizontalCenter; spacing: 48
+                    RoundBtn { icon: "skip-previous"; anchors.verticalCenter: parent.verticalCenter; visible: !!root.np && !!(root.np.feat & 16)
+                               onTapped: root.call("media_player", "media_previous_track", { entity_id: root.np.id }) }
+                    RoundBtn { icon: root.np && root.np.playing ? "pause" : "play"; primary: true
+                               onTapped: root.call("media_player", "media_play_pause", { entity_id: root.np.id }) }
+                    RoundBtn { icon: "skip-next"; anchors.verticalCenter: parent.verticalCenter; visible: !!root.np && !!(root.np.feat & 32)
+                               onTapped: root.call("media_player", "media_next_track", { entity_id: root.np.id }) } }
+                Row { width: parent.width; spacing: 18
+                    visible: !!root.np && root.np.vol !== undefined && root.np.vol !== null && !!(root.np.feat & 4)
+                    Ico { name: "volume-minus"; font.pixelSize: 44; anchors.verticalCenter: parent.verticalCenter; opacity: 0.85
+                          MouseArea { anchors.fill: parent; anchors.margins: -16
+                                      onClicked: { cardTimer.restart(); root.call("media_player", "volume_set", { entity_id: root.np.id, volume_level: Math.max(0, Math.round((root.np.vol - 0.05) * 100) / 100) }) } } }
+                    Rectangle {
+                        id: volBar
+                        width: parent.width - 2 * (44 + 18); height: 64; radius: 32; color: "#40FFFFFF"; anchors.verticalCenter: parent.verticalCenter
+                        readonly property real level: root.volPreview >= 0 ? root.volPreview : (root.np && root.np.vol ? root.np.vol : 0)
+                        Rectangle { height: parent.height; radius: 32; color: "#F2FFFFFF"; width: Math.max(64 * (volBar.level > 0), parent.width * volBar.level) }
+                        MouseArea { anchors.fill: parent
+                            function lv(x) { return Math.max(0, Math.min(1, Math.round(x / width * 100) / 100)) }
+                            onPressed: { root.volPreview = lv(mouse.x); cardTimer.restart() }
+                            onPositionChanged: root.volPreview = lv(mouse.x)
+                            onReleased: { root.call("media_player", "volume_set", { entity_id: root.np.id, volume_level: lv(mouse.x) }); volClear.restart() } }
+                        Timer { id: volClear; interval: 1500; onTriggered: root.volPreview = -1 }
+                    }
+                    Ico { name: "volume-plus"; font.pixelSize: 44; anchors.verticalCenter: parent.verticalCenter; opacity: 0.85
+                          MouseArea { anchors.fill: parent; anchors.margins: -16
+                                      onClicked: { cardTimer.restart(); root.call("media_player", "volume_set", { entity_id: root.np.id, volume_level: Math.min(1, Math.round((root.np.vol + 0.05) * 100) / 100) }) } } }
+                }
+                // Players without an absolute volume (Apple TV) can still step it.
+                Row { anchors.horizontalCenter: parent.horizontalCenter; spacing: 48
+                    visible: !!root.np && (root.np.vol === undefined || root.np.vol === null) && !!(root.np.feat & 1024)
+                    RoundBtn { icon: "volume-minus"; onTapped: root.call("media_player", "volume_down", { entity_id: root.np.id }) }
+                    RoundBtn { icon: "volume-plus"; onTapped: root.call("media_player", "volume_up", { entity_id: root.np.id }) } }
+                Btn { width: parent.width; label: "Done"; onTapped: root.card = "" }
+            }
+        }
+    }
+
     // ------------------------------------------------------------ physical slider indicator
     // hv_sliders.py long-polls the cap-touch state; Brilliant's hidden UI still does the dimming.
     property bool sliderActive: false
@@ -328,13 +521,20 @@ Window {
         onTextMessageReceived: {
             try {
                 var r = JSON.parse(message)
-                if (r.active && !root.sliderActive) tapCheck.stop()   // a new touch cancels the tap check
-                root.sliderIdx = r.slider; root.sliderLevel = r.level; root.sliderActive = r.active
+                var was = root.sliderActive
+                if (r.active && !was) { tapCheck.stop(); root.touchStart = Date.now() }   // a new touch cancels the tap check
+                var tapNow = r.taps !== undefined && root.lastTaps >= 0 && r.taps !== root.lastTaps
+                var c = root.ctlFor(r.slider)
+                root.sliderIdx = r.slider
+                root.sliderLevel = c && c.steps ? root.snap(r.level, c.steps) : r.level
+                root.sliderActive = r.active
                 if (r.active) root.lastFinger = Date.now()
-                if (r.taps !== undefined) {
-                    if (root.lastTaps >= 0 && r.taps !== root.lastTaps) root.tapped(r.tap_slider)
-                    root.lastTaps = r.taps
+                if (c) {
+                    if (r.active) root.ctlDrag(r.slider, root.sliderLevel)
+                    else if (was && !tapNow) root.ctlSend(r.slider, root.sliderLevel)
                 }
+                if (tapNow) root.tapped(r.tap_slider)
+                if (r.taps !== undefined) root.lastTaps = r.taps
             } catch (e) {}
         }
         onStatusChanged: if (status === WebSocket.Error || status === WebSocket.Closed) sliderRetry.restart()
@@ -345,7 +545,33 @@ Window {
     property int lastTaps: -1
     property string tapEntity: ""
     property string tapBefore: ""
+    // HomeView-driven sliders: nothing is sent for the first 0.4 s of a touch (it may be a
+    // tap, which toggles), then at most ~3 updates/s while dragging, and the final level on release.
+    property real touchStart: 0
+    property real ctlSentAt: 0
+    property int ctlSentLevel: -1
+    function snap(l, steps) { var b = steps[0]; for (var i = 0; i < steps.length; i++) if (Math.abs(steps[i] - l) < Math.abs(b - l)) b = steps[i]; return b }
+    function ctlDrag(i, lvl) {
+        if (Date.now() - touchStart < 400 || Date.now() - ctlSentAt < 300 || lvl === ctlSentLevel) return
+        ctlSend(i, lvl)
+    }
+    function ctlSend(i, lvl) {
+        var c = ctlFor(i); if (!c) return
+        ctlSentAt = Date.now(); ctlSentLevel = lvl
+        var fan = c.entity.indexOf("fan.") === 0
+        if (lvl <= 0) call(fan ? "fan" : "light", "turn_off", { entity_id: c.entity })
+        else if (fan) call("fan", "set_percentage", { entity_id: c.entity, percentage: lvl })
+        else call("light", "turn_on", { entity_id: c.entity, brightness_pct: lvl })
+    }
     function tapped(i) {
+        var own = ctlFor(i)
+        if (own) {
+            var on = v(own.entity) === "on", fan = own.entity.indexOf("fan.") === 0
+            ctlSentLevel = -1
+            call(fan ? "fan" : "light", on ? "turn_off" : "turn_on", { entity_id: own.entity })
+            if (on) { sliderIdx = i; sliderLevel = 0; hudLinger.restart() }
+            return
+        }
         var e = sliderLights[i]
         if (!e || i >= sliderNames.length || !st[e]) return
         tapEntity = e; tapBefore = st[e].s; tapCheck.restart()
@@ -388,7 +614,10 @@ Window {
                 Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: Math.max(parent.radius * 2 * (root.sliderLevel > 0), parent.height * root.sliderLevel / 100)
                             radius: 48; color: "#F2FFFFFF"; visible: root.sliderLevel > 0 }
             }
-            T { anchors.horizontalCenter: parent.horizontalCenter; y: 588; text: root.sliderLevel + "%"; font.pixelSize: 52; font.weight: Font.DemiBold }
+            T { anchors.horizontalCenter: parent.horizontalCenter; y: 588; font.pixelSize: 52; font.weight: Font.DemiBold
+                text: { var c = root.ctlFor(root.sliderIdx)
+                        if (c && c.steps && c.labels) { var k = c.steps.indexOf(root.sliderLevel); if (k >= 0) return c.labels[k] }
+                        return root.sliderLevel + "%" } }
         }
     }
 

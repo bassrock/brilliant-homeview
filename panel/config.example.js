@@ -25,6 +25,16 @@ var CLOCK_24H = false
 var SLIDERS = ["Island", "Cabinets", "Overhead"]
 var SLIDER_LIGHTS = ["light.kitchen_island", "light.kitchen_cabinets", "light.kitchen_overhead"]
 
+// Optional: sliders left unassigned in the Brilliant app can be driven by HomeView itself
+// (index-aligned with SLIDERS; null = Brilliant drives it). Lights dim 0-100; fans snap to
+// `steps` (with optional `labels` for the on-screen indicator). Tap toggles.
+// var SLIDER_CONTROL = [null, { entity: "light.ceiling_fan_light" },
+//     { entity: "fan.ceiling_fan", steps: [0, 33, 66, 100], labels: ["Off", "Low", "Medium", "High"] }]
+
+// Optional Now Playing: this room's media players in priority order (the first one playing
+// wins), e.g. an Apple TV (shows AirPlay too) and a Sonos. Artwork, progress, controls.
+var MEDIA = ["media_player.living_room_apple_tv", "media_player.kitchen_sonos"]
+
 // Attention chips. Nothing shows when everything is fine.
 // Unlocked doors: tap the chip for Lock buttons.
 var LOCKS = [

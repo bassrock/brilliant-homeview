@@ -4,7 +4,9 @@ An Apple HomeView-style photo face for **Brilliant** smart-home control panels, 
 **Home Assistant**. A big clock, the weather, your photos with a frosted-glass caption, and
 large "attention" chips that only appear when something needs you: an unlocked door, a
 package waiting, the dryer finished. Tap a chip to act on it (lock the door, open the
-package box). Touch a physical slider and a level indicator shows on screen.
+package box). Whatever the room's Apple TV or Sonos is playing shows as a Now Playing card
+with artwork; tap it for play/pause, skip, progress and volume. Touch a physical slider and
+a level indicator follows your finger.
 
 The panel's **physical cap-touch sliders keep working exactly as before**: Brilliant's own
 app stays running, just invisibly.
@@ -40,6 +42,10 @@ app stays running, just invisibly.
   screen off. Brilliant evaluates `screen_on_range` in **UTC** (the panel clock), so the
   helper converts and splits the window. A tap at night adds a short window to wake it.
   `hv_bus_set.py` applies these through Brilliant's own message-bus client.
+- **Slider taps.** Offscreen, Brilliant's cached light state goes stale, so a tap can
+  "toggle" a light to the state it is already in. The helper reports taps; if HA shows no
+  change 2.5 s later, HomeView flips the light itself. The kernel only reports axes that
+  changed, so slider positions are kept per slot across touches.
 - **GPU speed.** Brilliant's UI throttles the GPU (`galcore/gpu3DClockScale` = 4/64) while it
   thinks the screen is idle, which offscreen is always. That leaves any other app at ~2 fps.
   `hv_sliders.py` restores full speed every 2 s unless the SoC is at 85 °C or hotter.
@@ -88,6 +94,8 @@ documented). The main ones:
 | `DELIVERY` | package box flag/lock/script, mail flag, "arriving today" sensors |
 | `DONE` | `{entity, states, icon, text}` alerts, e.g. "Washer is done" |
 | `WEATHER`, `CLOCK_24H`, `IDLE_MS` | weather entity, 24-hour clock, card auto-close |
+| `MEDIA` | Now Playing: media players in priority order (first playing wins) |
+| `SLIDER_CONTROL` | drive sliders Brilliant leaves unassigned (lights, stepped fans) |
 | `NIGHT`, `WAKE_MS` | optional `{start, end}` hours for a black screen + backlight off, and tap-to-wake time |
 
 ## Gotchas learned the hard way
