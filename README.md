@@ -30,6 +30,10 @@ app stays running, just invisibly.
   grabbing it) and streams finger position to the app over a local WebSocket. Once
   Brilliant's hidden UI decides it's idle it stops forwarding slider touches to Linux, so
   the app also shows the indicator whenever a configured slider light's brightness changes.
+  While the indicator is up, the face underneath isn't drawn at all (an opaque pre-darkened
+  photo + a plain card), so it runs at a steady 60 fps.
+- **Night mode.** Optional per panel: a black screen with the backlight actually off
+  between set hours; a tap wakes it for 30 s, and touching a slider shows the level briefly.
 - **GPU speed.** Brilliant's UI throttles the GPU (`galcore/gpu3DClockScale` = 4/64) while it
   thinks the screen is idle, which offscreen is always. That leaves any other app at ~2 fps.
   `hv_sliders.py` restores full speed every 2 s unless the SoC is at 85 °C or hotter.
@@ -57,6 +61,7 @@ Everything installs under `/etc`, which survives Brilliant's OSTree OTA updates
    ```sh
    ./install.sh <panel-ip> kitchen.config.js America/Los_Angeles
    ```
+   The timezone (3rd argument) goes to `/etc/homeview/env`; the panel's clock is UTC.
 4. **Uninstall** (back to stock Brilliant):
    ```sh
    ./uninstall.sh <panel-ip>
@@ -77,6 +82,7 @@ documented). The main ones:
 | `DELIVERY` | package box flag/lock/script, mail flag, "arriving today" sensors |
 | `DONE` | `{entity, states, icon, text}` alerts, e.g. "Washer is done" |
 | `WEATHER`, `CLOCK_24H`, `IDLE_MS` | weather entity, 24-hour clock, card auto-close |
+| `NIGHT`, `WAKE_MS` | optional `{start, end}` hours for a black screen + backlight off, and tap-to-wake time |
 
 ## Gotchas learned the hard way
 
@@ -88,6 +94,9 @@ documented). The main ones:
   `install.sh` masks it (so boot shows black until HomeView starts).
 - QML: properties can't start with a capital letter or with `on` + capital (that's signal
   handler syntax); `prop: { ... }; next: x` on one line is a syntax error.
+- `systemctl restart switch_ui_app` right after a stop can get the start killed; it retries
+  on its own, but its unit reboots the panel after 6 failures in 120 s, so don't loop it.
+- Measure frame times with `QSG_RENDER_TIMING=1` in the service environment (journalctl).
 - Screenshot the panel: read `/sys/class/graphics/fb0/pan` for the visible page, then
   `dd if=/dev/fb0 bs=2880 skip=<y> count=1280` (BGRA, 720x1280).
 
@@ -97,7 +106,7 @@ documented). The main ones:
 panel/
   main.qml               the app
   config.example.js      per-panel settings
-  hv_sliders.py          slider watcher + GPU keeper (stdlib Python)
+  hv_sliders.py          slider watcher, GPU keeper, backlight control (stdlib Python)
   fonts/                 Inter (OFL) + Material Design Icons (Apache 2.0)
   system/                homeview.service, hv-sliders.service, switch_ui offscreen drop-in
 homeassistant/

@@ -53,3 +53,9 @@ var DONE = [
 
 // Return to the photo face after this much idle time (only matters for open cards).
 var IDLE_MS = 45000
+
+// Optional night mode (bedrooms): between these hours the screen is black with the
+// backlight off; a tap wakes it for WAKE_MS. Sliders keep working throughout.
+// Leave NIGHT out for an always-on panel (e.g. a kitchen).
+var NIGHT = { start: 22, end: 7 }
+var WAKE_MS = 30000

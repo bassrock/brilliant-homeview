@@ -42,6 +42,10 @@ Window {
     readonly property var arrivingSensors: delivery.arriving || []
     readonly property var doneAlerts: cfg("DONE", [])                   // [{entity, states, icon, text}]
     readonly property bool clock24: cfg("CLOCK_24H", false)
+    // Optional night window {start: 22, end: 7} (hours, decimals ok): screen goes black and the
+    // backlight off; a tap wakes it for WAKE_MS. Sliders keep working throughout.
+    readonly property var nightCfg: cfg("NIGHT", null)
+    readonly property int wakeMs: cfg("WAKE_MS", 30000)
     // The immich_frames feed for this panel (sensor.<feed>_date, button.<feed>_next, ...).
     readonly property string feed: cfg("FEED", "")
     readonly property string photoVersionEntity: cfg("PHOTO_VERSION", "")
@@ -176,11 +180,12 @@ Window {
     // ------------------------------------------------------------ photos (crossfade)
     function photo(n) { return Cfg.PHOTO + "/" + n + ".jpg?v=" + photoVer }
     property bool frontA: true
+    readonly property bool faceHidden: hudLayer.opacity === 1 || screenBlack
     onPhotoVerChanged: (frontA ? imgB : imgA).source = photo("full")
-    Image { id: imgA; anchors.fill: parent; cache: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
+    Image { id: imgA; visible: !root.faceHidden; anchors.fill: parent; cache: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
             opacity: root.frontA ? 1 : 0; Behavior on opacity { NumberAnimation { duration: 900 } }
             onStatusChanged: if (status === Image.Ready && !root.frontA) { root.frontA = true; frost.source = root.photo("frost") } }
-    Image { id: imgB; anchors.fill: parent; cache: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
+    Image { id: imgB; visible: !root.faceHidden; anchors.fill: parent; cache: false; asynchronous: true; fillMode: Image.PreserveAspectCrop
             opacity: root.frontA ? 0 : 1; Behavior on opacity { NumberAnimation { duration: 900 } }
             onStatusChanged: if (status === Image.Ready && root.frontA) { root.frontA = false; frost.source = root.photo("frost") } }
     Image { id: frost; width: 720; height: 1280; cache: false; asynchronous: true; opacity: 0 }
@@ -213,6 +218,7 @@ Window {
 
     // ------------------------------------------------------------ face
     Column {
+        visible: !root.faceHidden
         x: 50; y: 64
         T { text: root.dateText; font.pixelSize: 38; opacity: 0.94 }
         T { text: root.clockText; font.pixelSize: 236; font.weight: Font.Light; font.letterSpacing: -10; x: -10; height: 250 }
@@ -224,6 +230,7 @@ Window {
     // Only what needs attention right now; nothing at all when all is well.
     Column {
         id: chipCol
+        visible: !root.faceHidden
         x: 40
         anchors.bottom: cap.top
         anchors.bottomMargin: 20
@@ -245,6 +252,7 @@ Window {
 
     Item {
         id: cap
+        visible: !root.faceHidden
         x: 40; width: Math.min(640, capRow.implicitWidth + 80); height: 116
         anchors.bottom: parent.bottom; anchors.bottomMargin: 44
         Glass { width: parent.width; height: parent.height; radius: 58; origin: Qt.point(cap.x, cap.y) }
@@ -328,28 +336,66 @@ Window {
     Timer { id: sliderRetry; interval: 3000; onTriggered: { sliderWs.active = false; sliderWs.active = true } }
 
 
+    // Opaque, cheap layer: a pre-darkened photo + plain card. While it's fully up the face
+    // underneath isn't drawn at all, so each slider frame is a couple of quads.
     Item {
         id: hudLayer
         anchors.fill: parent
         opacity: root.hudShown ? 1 : 0
         visible: opacity > 0
-        Behavior on opacity { NumberAnimation { duration: 160 } }
-        Rectangle { anchors.fill: parent; color: "#A6000000" }
-        Item {
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        Image { anchors.fill: parent; source: root.photo("soft"); cache: false; asynchronous: true }
+        Rectangle { anchors.fill: parent; color: "#59000000"; visible: root.nightActive }
+        Rectangle {
             id: hud
-            width: 320; height: 680
+            width: 320; height: 680; radius: 64
             anchors.centerIn: parent
-            Glass { width: parent.width; height: parent.height; radius: 64; origin: Qt.point(hud.x, hud.y) }
-            Rectangle { anchors.fill: parent; radius: 64; color: "#33000000" }
+            color: "#38FFFFFF"; border.width: 1; border.color: "#4DFFFFFF"
             T { anchors.horizontalCenter: parent.horizontalCenter; y: 38; width: 280; horizontalAlignment: Text.AlignHCenter
                 text: root.sliderNames[root.sliderIdx] || ("Slider " + (root.sliderIdx + 1))
                 font.pixelSize: 32; font.weight: Font.DemiBold; elide: Text.ElideRight }
             Rectangle {
-                x: 85; y: 104; width: 150; height: 460; radius: 48; color: "#40FFFFFF"; clip: true
-                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: parent.height * root.sliderLevel / 100
-                            radius: 48; color: "#F2FFFFFF" }
+                x: 85; y: 104; width: 150; height: 460; radius: 48; color: "#40FFFFFF"
+                Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: Math.max(parent.radius * 2 * (root.sliderLevel > 0), parent.height * root.sliderLevel / 100)
+                            radius: 48; color: "#F2FFFFFF"; visible: root.sliderLevel > 0 }
             }
             T { anchors.horizontalCenter: parent.horizontalCenter; y: 588; text: root.sliderLevel + "%"; font.pixelSize: 52; font.weight: Font.DemiBold }
         }
     }
+
+    // ------------------------------------------------------------ night mode
+    property bool nightWindow: false
+    property real wakeUntil: 0
+    readonly property bool nightActive: nightWindow
+    property bool screenBlack: false
+    function evalNight() {
+        var n = new Date(), h = n.getHours() + n.getMinutes() / 60
+        var w = false
+        if (nightCfg) w = nightCfg.start > nightCfg.end ? (h >= nightCfg.start || h < nightCfg.end) : (h >= nightCfg.start && h < nightCfg.end)
+        nightWindow = w
+        var black = w && Date.now() >= wakeUntil && !hudShown
+        if (black !== screenBlack) { screenBlack = black; backlight(!black) }
+    }
+    function backlight(on) {
+        var x = new XMLHttpRequest()
+        x.open("GET", "http://127.0.0.1:8765/backlight?on=" + (on ? 1 : 0))
+        x.send()
+    }
+    function wake(ms) { wakeUntil = Date.now() + ms; evalNight(); nightWake.interval = ms + 200; nightWake.restart() }
+    // Re-assert the screen state every tick (and at start): the helper outlives app restarts.
+    Timer { id: nightTick; interval: 15000; running: true; repeat: true; triggeredOnStart: true; onTriggered: { root.evalNight(); root.backlight(!root.screenBlack) } }
+    Timer { id: nightWake; repeat: false; onTriggered: root.evalNight() }
+    onHudShownChanged: { if (hudShown && nightWindow) wake(4000); else evalNight() }
+
+    // Black, and it swallows the waking tap so nothing underneath fires by accident.
+    Rectangle {
+        anchors.fill: parent
+        color: "black"
+        visible: root.screenBlack
+        z: 2000
+        MouseArea { anchors.fill: parent; onPressed: root.wake(root.wakeMs) }
+    }
+    // Any touch counts as activity at night (doesn't consume the event).
+    MouseArea { anchors.fill: parent; z: 1999; enabled: root.nightWindow && !root.screenBlack; propagateComposedEvents: true
+                onPressed: { root.wake(root.wakeMs); mouse.accepted = false } }
 }

@@ -7,6 +7,8 @@ the on-screen level indicator Brilliant's hidden UI no longer shows.
 
 ws://127.0.0.1:8765/ws streams every change as a text frame, at most ~30 per second
 (one persistent socket: per-update HTTP requests made the on-screen bar stutter).
+GET /backlight?on=0|1 sets the screen backlight (night mode); held every 2 s, and the
+last daytime level is restored on wake.
 GET http://127.0.0.1:8765/state?since=<seq> long-polls (25 s) for the next change:
   {"seq": 12, "active": true, "slider": 0, "level": 63}
 level is the finger position 0-100 (bottom..top); slider is 0-based (the device
@@ -104,20 +106,53 @@ GPU_SCALE = "/sys/bus/platform/drivers/galcore/gpu3DClockScale"
 THERMAL = "/sys/class/thermal/thermal_zone0/temp"
 
 
-def gpu_keeper():
+BACKLIGHT = "/sys/class/backlight/backlight_lcd/brightness"
+screen = {"on": True, "saved": None}
+
+
+def keepers():
     while True:
         try:
-            hot = int(open(THERMAL).read().strip()) >= 85000
-            if not hot and open(GPU_SCALE).read().strip() != "64":
-                with open(GPU_SCALE, "w") as f:
-                    f.write("64")
+            cur = int(open(BACKLIGHT).read().strip())
+            if not screen["on"]:
+                if cur != 0:
+                    screen["saved"] = cur
+                    open(BACKLIGHT, "w").write("0")
+            elif cur == 0 and screen["saved"]:
+                open(BACKLIGHT, "w").write(str(screen["saved"]))
+                screen["saved"] = None
         except (OSError, ValueError):
             pass
+        gpu_keep()
         time.sleep(2)
 
 
+def set_screen(on):
+    screen["on"] = on
+    try:
+        cur = int(open(BACKLIGHT).read().strip())
+        if not on and cur != 0:
+            screen["saved"] = cur
+            open(BACKLIGHT, "w").write("0")
+        elif on and cur == 0:
+            open(BACKLIGHT, "w").write(str(screen["saved"] or 8))
+            screen["saved"] = None
+    except (OSError, ValueError):
+        pass
+
+
+def gpu_keep():
+    try:
+        hot = int(open(THERMAL).read().strip()) >= 85000
+        if not hot and open(GPU_SCALE).read().strip() != "64":
+            with open(GPU_SCALE, "w") as f:
+                f.write("64")
+    except (OSError, ValueError):
+        pass
+
+
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-MIN_GAP = 1 / 30
+MIN_GAP = 1 / 50
 
 
 def ws_frame(text):
@@ -162,6 +197,11 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/ws" and self.headers.get("Upgrade", "").lower() == "websocket":
             return self.stream()
         q = parse_qs(u.query)
+        if u.path == "/backlight":
+            set_screen((q.get("on") or ["1"])[0] == "1")
+            self.send_response(204)
+            self.end_headers()
+            return
         if u.path == "/fake":
             publish(active=(q.get("active") or ["1"])[0] == "1",
                     slider=int((q.get("slider") or ["0"])[0]), level=int((q.get("level") or ["50"])[0]))
@@ -184,5 +224,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     threading.Thread(target=reader, daemon=True).start()
-    threading.Thread(target=gpu_keeper, daemon=True).start()
+    threading.Thread(target=keepers, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", 8765), Handler).serve_forever()
