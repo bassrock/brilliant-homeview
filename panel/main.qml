@@ -168,7 +168,7 @@ Window {
             }
             st[k] = cur
             var li = sliderLights.indexOf(k)
-            if (li >= 0 && (cur.s !== wasOn || cur.a.brightness !== wasBri) && !sliderActive && Date.now() - lastFinger > 2000) {
+            if (li >= 0 && (cur.s !== wasOn || cur.a.brightness !== wasBri) && !sliderActive && Date.now() - lastFinger > 5000) {
                 sliderIdx = li
                 sliderLevel = cur.s === "on" ? Math.round((cur.a.brightness || 255) * 100 / 255) : 0
                 hudLinger.restart()
@@ -356,8 +356,10 @@ Window {
         id: tapCheck; interval: 2500
         onTriggered: {
             var cur = root.st[root.tapEntity]
-            if (cur && cur.s === root.tapBefore && (cur.s === "on" || cur.s === "off"))
+            if (cur && cur.s === root.tapBefore && (cur.s === "on" || cur.s === "off")) {
+                root.lastFinger = Date.now()   // our own fix's echo shouldn't pop the bar up again
                 root.call("light", cur.s === "on" ? "turn_off" : "turn_on", { entity_id: root.tapEntity })
+            }
         }
     }
     Timer { id: sliderRetry; interval: 3000; onTriggered: { sliderWs.active = false; sliderWs.active = true } }
