@@ -32,8 +32,14 @@ app stays running, just invisibly.
   the app also shows the indicator whenever a configured slider light's brightness changes.
   While the indicator is up, the face underneath isn't drawn at all (an opaque pre-darkened
   photo + a plain card), so it runs at a steady 60 fps.
-- **Night mode.** Optional per panel: a black screen with the backlight actually off
-  between set hours; a tap wakes it for 30 s, and touching a slider shows the level briefly.
+- **Night mode.** Optional per panel. Brilliant's hidden UI still runs an "art handler" that
+  owns the screen (it switches the backlight off within seconds of anything else turning it
+  on), so HomeView steers Brilliant's own display settings instead of the backlight:
+  by day, motion wake on with a 24 h off-timeout (Brilliant's stock "on with motion", which it
+  holds steadily) and the screen schedule set to the day window; at night, motion wake off and
+  screen off. Brilliant evaluates `screen_on_range` in **UTC** (the panel clock), so the
+  helper converts and splits the window. A tap at night adds a short window to wake it.
+  `hv_bus_set.py` applies these through Brilliant's own message-bus client.
 - **GPU speed.** Brilliant's UI throttles the GPU (`galcore/gpu3DClockScale` = 4/64) while it
   thinks the screen is idle, which offscreen is always. That leaves any other app at ~2 fps.
   `hv_sliders.py` restores full speed every 2 s unless the SoC is at 85 °C or hotter.
@@ -94,6 +100,9 @@ documented). The main ones:
   `install.sh` masks it (so boot shows black until HomeView starts).
 - QML: properties can't start with a capital letter or with `on` + capital (that's signal
   handler syntax); `prop: { ... }; next: x` on one line is a syntax error.
+- Night mode changes Brilliant's own display settings (motion wake, screen schedule,
+  brightness may be raised). `uninstall.sh` doesn't restore them; reset them in the
+  Brilliant app if you go back to stock.
 - `systemctl restart switch_ui_app` right after a stop can get the start killed; it retries
   on its own, but its unit reboots the panel after 6 failures in 120 s, so don't loop it.
 - Measure frame times with `QSG_RENDER_TIMING=1` in the service environment (journalctl).
@@ -106,7 +115,8 @@ documented). The main ones:
 panel/
   main.qml               the app
   config.example.js      per-panel settings
-  hv_sliders.py          slider watcher, GPU keeper, backlight control (stdlib Python)
+  hv_sliders.py          slider watcher, GPU keeper, night-mode control (stdlib Python)
+  hv_bus_set.py          sets Brilliant message-bus variables (runs under Brilliant's Python)
   fonts/                 Inter (OFL) + Material Design Icons (Apache 2.0)
   system/                homeview.service, hv-sliders.service, switch_ui offscreen drop-in
 homeassistant/

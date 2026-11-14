@@ -14,7 +14,7 @@ fi
 cd "$(dirname "$0")"
 
 echo "== copying to $IP"
-COPYFILE_DISABLE=1 tar cf - -C panel main.qml hv_sliders.py fonts system | \
+COPYFILE_DISABLE=1 tar cf - -C panel main.qml hv_sliders.py hv_bus_set.py fonts system | \
   ssh root@"$IP" 'rm -rf /tmp/hvinst && mkdir -p /tmp/hvinst && tar xf - -C /tmp/hvinst'
 ssh root@"$IP" 'umask 077; mkdir -p /etc/homeview; cat > /etc/homeview/config.js' < "$CONFIG"
 
@@ -24,6 +24,7 @@ set -e
 cd /tmp/hvinst
 install -m 644 main.qml /etc/homeview/main.qml
 install -m 755 hv_sliders.py /etc/homeview/hv_sliders.py
+install -m 644 hv_bus_set.py /etc/homeview/hv_bus_set.py
 mkdir -p /etc/homeview/fonts && cp fonts/* /etc/homeview/fonts/
 chmod 600 /etc/homeview/config.js
 echo "TZ=$TZ_NAME" > /etc/homeview/env

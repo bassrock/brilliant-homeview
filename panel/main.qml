@@ -42,8 +42,8 @@ Window {
     readonly property var arrivingSensors: delivery.arriving || []
     readonly property var doneAlerts: cfg("DONE", [])                   // [{entity, states, icon, text}]
     readonly property bool clock24: cfg("CLOCK_24H", false)
-    // Optional night window {start: 22, end: 7} (hours, decimals ok): screen goes black and the
-    // backlight off; a tap wakes it for WAKE_MS. Sliders keep working throughout.
+    // Optional night window {start: 22, end: 7} (hours, decimals ok): the screen goes dark
+    // (Brilliant's own screen schedule is set to match); a tap wakes it for WAKE_MS.
     readonly property var nightCfg: cfg("NIGHT", null)
     readonly property int wakeMs: cfg("WAKE_MS", 30000)
     // The immich_frames feed for this panel (sensor.<feed>_date, button.<feed>_next, ...).
@@ -374,16 +374,22 @@ Window {
         if (nightCfg) w = nightCfg.start > nightCfg.end ? (h >= nightCfg.start || h < nightCfg.end) : (h >= nightCfg.start && h < nightCfg.end)
         nightWindow = w
         var black = w && Date.now() >= wakeUntil && !hudShown
-        if (black !== screenBlack) { screenBlack = black; backlight(!black) }
+        if (black !== screenBlack) { screenBlack = black; screenMode() }
     }
-    function backlight(on) {
+    // Night mode is enforced by Brilliant itself: the helper rewrites Brilliant's screen
+    // schedule (in UTC) to our day window, plus a short window when woken at night.
+    function screenMode() {
+        if (!nightCfg) return
+        var mode = !nightWindow ? "day" : (screenBlack ? "night" : "wake")
+        var left = Math.max(5, Math.round((wakeUntil - Date.now()) / 1000))
         var x = new XMLHttpRequest()
-        x.open("GET", "http://127.0.0.1:8765/backlight?on=" + (on ? 1 : 0))
+        x.open("GET", "http://127.0.0.1:8765/screen?mode=" + mode + "&start=" + nightCfg.start + "&end=" + nightCfg.end +
+               "&off=" + (-new Date().getTimezoneOffset()) + "&wake=" + left)
         x.send()
     }
-    function wake(ms) { wakeUntil = Date.now() + ms; evalNight(); nightWake.interval = ms + 200; nightWake.restart() }
+    function wake(ms) { wakeUntil = Date.now() + ms; evalNight(); screenMode(); nightWake.interval = ms + 200; nightWake.restart() }
     // Re-assert the screen state every tick (and at start): the helper outlives app restarts.
-    Timer { id: nightTick; interval: 15000; running: true; repeat: true; triggeredOnStart: true; onTriggered: { root.evalNight(); root.backlight(!root.screenBlack) } }
+    Timer { id: nightTick; interval: 15000; running: true; repeat: true; triggeredOnStart: true; onTriggered: { root.evalNight(); root.screenMode() } }
     Timer { id: nightWake; repeat: false; onTriggered: root.evalNight() }
     onHudShownChanged: { if (hudShown && nightWindow) wake(4000); else evalNight() }
 
