@@ -20,7 +20,8 @@ var WEATHER = "weather.forecast_home"
 var CLOCK_24H = false
 
 // Physical slider labels (top to bottom) and the HA light each one dims. The on-screen
-// level indicator follows these lights' brightness.
+// level indicator follows these lights' brightness. List only the sliders you use:
+// touching an unlisted slider shows nothing.
 var SLIDERS = ["Island", "Cabinets", "Overhead"]
 var SLIDER_LIGHTS = ["light.kitchen_island", "light.kitchen_cabinets", "light.kitchen_overhead"]
 

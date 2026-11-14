@@ -316,7 +316,8 @@ Window {
     property real lastFinger: 0
     property int sliderIdx: 0
     property int sliderLevel: 0
-    property bool hudShown: sliderActive || hudLinger.running
+    // A slider with no label in SLIDERS (unused) never shows the indicator.
+    property bool hudShown: (sliderActive || hudLinger.running) && sliderIdx < sliderNames.length
     Timer { id: hudLinger; interval: 1800 }
     onSliderActiveChanged: if (!sliderActive) hudLinger.restart()
     // hv_sliders.py streams finger position over one persistent local WebSocket (~30/s).

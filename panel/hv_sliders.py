@@ -28,7 +28,7 @@ every 2 s unless the SoC is hot (>= 85 C), so real thermal throttling still wins
 Stdlib only (the panel's /usr/bin/python3 has no extras).
 """
 import base64
-import struct
+import fcntl
 import subprocess
 import glob
 import hashlib
@@ -57,6 +57,12 @@ def publish(**kw):
             cond.notify_all()
 
 
+def absval(fd, code):
+    """Current value of an absolute axis (EVIOCGABS)."""
+    buf = fcntl.ioctl(fd, 0x80184540 + code, bytes(24))
+    return struct.unpack("6i", buf)[0]
+
+
 def find_device():
     for n in glob.glob("/sys/class/input/event*/device/name"):
         try:
@@ -74,7 +80,20 @@ def reader():
             time.sleep(10)
             continue
         fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
-        slot, contacts = 0, {}
+        # The kernel only reports axes that CHANGED, per slot. Touching the same slider
+        # again sends no new X, so positions must persist across contacts (resetting them
+        # per touch made every repeat touch on a slider invisible). Seed from the device.
+        slot, live, pos = 0, set(), {}
+        try:
+            pos[0] = {"x": absval(fd, ABS_MT_POSITION_X), "y": absval(fd, ABS_MT_POSITION_Y)}
+        except OSError:
+            pass
+
+        def emit(sl):
+            c = pos.get(sl)
+            if sl in live and c and c["x"] is not None and c["y"] is not None:
+                publish(active=True, slider=max(0, c["x"] - 1), level=max(0, min(100, round(c["y"] / 10))))
+
         try:
             while True:
                 select.select([fd], [], [], 30)
@@ -90,19 +109,17 @@ def reader():
                         slot = value
                     elif code == ABS_MT_TRACKING_ID:
                         if value >= 0:
-                            contacts[slot] = {"x": None, "y": None}
+                            live.add(slot)
+                            pos.setdefault(slot, {"x": None, "y": None})
+                            emit(slot)
                         else:
-                            contacts.pop(slot, None)
-                            if not contacts:
+                            live.discard(slot)
+                            if not live:
                                 publish(active=False)
-                    elif slot in contacts:
-                        c = contacts[slot]
-                        if code == ABS_MT_POSITION_X:
-                            c["x"] = value
-                        elif code == ABS_MT_POSITION_Y:
-                            c["y"] = value
-                        if c["x"] is not None and c["y"] is not None:
-                            publish(active=True, slider=max(0, c["x"] - 1), level=max(0, min(100, round(c["y"] / 10))))
+                    elif code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
+                        c = pos.setdefault(slot, {"x": None, "y": None})
+                        c["x" if code == ABS_MT_POSITION_X else "y"] = value
+                        emit(slot)
         except OSError:
             time.sleep(2)
         finally:
