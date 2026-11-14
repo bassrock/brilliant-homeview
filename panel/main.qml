@@ -330,9 +330,38 @@ Window {
                 var r = JSON.parse(message)
                 root.sliderIdx = r.slider; root.sliderLevel = r.level; root.sliderActive = r.active
                 if (r.active) root.lastFinger = Date.now()
+                if (r.taps !== undefined) {
+                    if (root.lastTaps >= 0 && r.taps !== root.lastTaps) root.tapped(r.tap_slider)
+                    root.lastTaps = r.taps
+                }
             } catch (e) {}
         }
         onStatusChanged: if (status === WebSocket.Error || status === WebSocket.Closed) sliderRetry.restart()
+    }
+    // Tap = Brilliant toggles the light. Offscreen its cached state can be stale, so a tap
+    // sometimes "toggles" to what the light already is. If HA shows no change shortly after,
+    // flip it ourselves.
+    property int lastTaps: -1
+    property string tapEntity: ""
+    property string tapBefore: ""
+    function tapped(i) {
+        var e = sliderLights[i]
+        if (!e || i >= sliderNames.length || !st[e]) return
+        tapEntity = e; tapBefore = st[e].s; tapCheck.restart()
+        // Show where the tap takes the light (not where the finger landed), then let HA's
+        // real update through (lastFinger = 0 lifts the "finger wins" hold).
+        sliderIdx = i
+        sliderLevel = tapBefore === "on" ? 0 : (st[e].a && st[e].a.brightness ? Math.round(st[e].a.brightness * 100 / 255) : 100)
+        lastFinger = 0
+        hudLinger.restart()
+    }
+    Timer {
+        id: tapCheck; interval: 2500
+        onTriggered: {
+            var cur = root.st[root.tapEntity]
+            if (cur && cur.s === root.tapBefore && (cur.s === "on" || cur.s === "off"))
+                root.call("light", cur.s === "on" ? "turn_off" : "turn_on", { entity_id: root.tapEntity })
+        }
     }
     Timer { id: sliderRetry; interval: 3000; onTriggered: { sliderWs.active = false; sliderWs.active = true } }
 

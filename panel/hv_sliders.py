@@ -44,7 +44,12 @@ from urllib.parse import parse_qs, urlparse
 EVENT = struct.Struct("llHHi")
 EV_ABS, ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 3, 0x2F, 0x35, 0x36, 0x39
 
-state = {"seq": 0, "active": False, "slider": 0, "level": 0}
+# A short touch with little movement is a tap (Brilliant toggles the light). Reported as a
+# counter so HomeView can make sure the light really changed: offscreen, Brilliant's cached
+# light state goes stale and a tap can "toggle" to the state the light is already in.
+TAP_S, TAP_MOVE = 0.4, 80
+
+state = {"seq": 0, "active": False, "slider": 0, "level": 0, "taps": 0, "tap_slider": 0}
 cond = threading.Condition()
 
 
@@ -110,15 +115,24 @@ def reader():
                     elif code == ABS_MT_TRACKING_ID:
                         if value >= 0:
                             live.add(slot)
-                            pos.setdefault(slot, {"x": None, "y": None})
+                            c = pos.setdefault(slot, {"x": None, "y": None})
+                            c["t0"], c["y0"], c["ymax"] = time.monotonic(), None, 0
                             emit(slot)
                         else:
                             live.discard(slot)
-                            if not live:
-                                publish(active=False)
+                            c = pos.get(slot) or {}
+                            tap = (c.get("t0") is not None and time.monotonic() - c["t0"] < TAP_S
+                                   and c.get("ymax", 0) < TAP_MOVE and c.get("x") is not None)
+                            extra = {"taps": state["taps"] + 1, "tap_slider": max(0, c["x"] - 1)} if tap else {}
+                            if not live or extra:
+                                publish(active=bool(live), **extra)
                     elif code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
                         c = pos.setdefault(slot, {"x": None, "y": None})
                         c["x" if code == ABS_MT_POSITION_X else "y"] = value
+                        if code == ABS_MT_POSITION_Y and c.get("t0") is not None:
+                            if c.get("y0") is None:
+                                c["y0"] = value
+                            c["ymax"] = max(c.get("ymax", 0), abs(value - c["y0"]))
                         emit(slot)
         except OSError:
             time.sleep(2)
