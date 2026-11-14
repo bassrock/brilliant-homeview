@@ -328,6 +328,7 @@ Window {
         onTextMessageReceived: {
             try {
                 var r = JSON.parse(message)
+                if (r.active && !root.sliderActive) tapCheck.stop()   // a new touch cancels the tap check
                 root.sliderIdx = r.slider; root.sliderLevel = r.level; root.sliderActive = r.active
                 if (r.active) root.lastFinger = Date.now()
                 if (r.taps !== undefined) {
@@ -348,12 +349,8 @@ Window {
         var e = sliderLights[i]
         if (!e || i >= sliderNames.length || !st[e]) return
         tapEntity = e; tapBefore = st[e].s; tapCheck.restart()
-        // Show where the tap takes the light (not where the finger landed), then let HA's
-        // real update through (lastFinger = 0 lifts the "finger wins" hold).
-        sliderIdx = i
-        sliderLevel = tapBefore === "on" ? 0 : (st[e].a && st[e].a.brightness ? Math.round(st[e].a.brightness * 100 / 255) : 100)
-        lastFinger = 0
-        hudLinger.restart()
+        // The bar follows the finger, except a tap that turns the light off drops it to 0.
+        if (tapBefore === "on") { sliderIdx = i; sliderLevel = 0; hudLinger.restart() }
     }
     Timer {
         id: tapCheck; interval: 2500
