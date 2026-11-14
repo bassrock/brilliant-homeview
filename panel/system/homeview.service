@@ -1,0 +1,28 @@
+# /etc/systemd/system/homeview.service - Brilliant HomeView photo face.
+[Unit]
+Description=HomeView photo face
+After=switch_ui_app.service network-online.target
+Wants=network-online.target
+
+[Service]
+# TZ comes from /etc/homeview/env (written by install.sh); the panel clock is UTC.
+EnvironmentFile=-/etc/homeview/env
+Environment=QT_QPA_PLATFORM=eglfs
+Environment=QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0
+Environment=QT_QPA_EGLFS_NO_LIBINPUT=1
+Environment=QT_QPA_GENERIC_PLUGINS=evdevtouch:/dev/input/event0
+Environment=XDG_RUNTIME_DIR=/run/homeview
+RuntimeDirectory=homeview
+RuntimeDirectoryMode=0700
+WorkingDirectory=/etc/homeview
+ExecStartPre=-/usr/bin/pkill -x fbi
+ExecStart=/usr/bin/qmlscene /etc/homeview/main.qml
+# bootsplash.service (fbi) is masked by install.sh; belt and braces:
+ExecStartPost=-/bin/sh -c 'sleep 30; pkill -x fbi'
+Restart=always
+RestartSec=5
+# Never reboot the panel over this app (unlike Brilliant's own unit).
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

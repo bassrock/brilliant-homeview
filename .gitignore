@@ -1,0 +1,6 @@
+# Real panel configs hold Home Assistant tokens.
+*.config.js
+config.js
+!panel/config.example.js
+.DS_Store
+__pycache__/

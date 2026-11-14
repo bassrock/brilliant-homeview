@@ -1,0 +1,12 @@
+# /etc/systemd/system/hv-sliders.service - live slider state for HomeView's on-screen indicator.
+[Unit]
+Description=HomeView slider watcher
+
+[Service]
+ExecStart=/usr/bin/python3 /etc/homeview/hv_sliders.py
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

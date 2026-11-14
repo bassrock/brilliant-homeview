@@ -1,0 +1,7 @@
+# Example: one Brilliant panel fed by an immich_frames slideshow.
+# Put panel_photo_key (16+ random characters) in secrets.yaml.
+panel_photo:
+  source: image.kitchen_panel_image
+  key: !secret panel_photo_key
+  width: 720
+  height: 1280

@@ -1,0 +1,112 @@
+# Brilliant HomeView
+
+An Apple HomeView-style photo face for **Brilliant** smart-home control panels, driven by
+**Home Assistant**. A big clock, the weather, your photos with a frosted-glass caption, and
+large "attention" chips that only appear when something needs you: an unlocked door, a
+package waiting, the dryer finished. Tap a chip to act on it (lock the door, open the
+package box). Touch a physical slider and a level indicator shows on screen.
+
+The panel's **physical cap-touch sliders keep working exactly as before**: Brilliant's own
+app stays running, just invisibly.
+
+> Unofficial. Not affiliated with Brilliant NextGen or Apple. You are modifying a device
+> you own, as root; keep `uninstall.sh` handy.
+
+## How it works
+
+- **Brilliant's UI keeps running, offscreen.** A systemd drop-in starts Brilliant's
+  `switch-ui` with `QT_QPA_PLATFORM=offscreen`. It still reads the sliders and drives your
+  lights, the mesh, voice and the Brilliant backend; it just no longer owns the screen. The
+  touchscreen and framebuffer go to HomeView.
+- **HomeView is a native QML app** (`qmlscene`, Qt 5.15 eglfs), not a web page. The panel's
+  QtWebEngine is far too slow for Home Assistant's frontend; QML idles at ~0% CPU / ~50 MB.
+- **Live data** comes from the Home Assistant websocket API (`subscribe_entities`, only the
+  entities you configure).
+- **Photos and frosted glass.** The `panel_photo` Home Assistant integration renders each new
+  photo into screen-sized JPEGs, including a heavily blurred copy that lines up pixel for
+  pixel with the screen. Every glass pane samples its own patch of that image in a tiny
+  GLSL shader, so it looks like live backdrop blur at no runtime cost.
+- **Slider indicator.** `hv_sliders.py` watches the cap-touch input device (without
+  grabbing it) and streams finger position to the app over a local WebSocket. Once
+  Brilliant's hidden UI decides it's idle it stops forwarding slider touches to Linux, so
+  the app also shows the indicator whenever a configured slider light's brightness changes.
+- **GPU speed.** Brilliant's UI throttles the GPU (`galcore/gpu3DClockScale` = 4/64) while it
+  thinks the screen is idle, which offscreen is always. That leaves any other app at ~2 fps.
+  `hv_sliders.py` restores full speed every 2 s unless the SoC is at 85 °C or hotter.
+
+Everything installs under `/etc`, which survives Brilliant's OSTree OTA updates
+(`/usr` and `/data` do not).
+
+## Requirements
+
+- A Brilliant panel with root SSH (tested: Brilliant Embedded Linux 4.0.11 "kirkstone",
+  i.MX6, Qt 5.15.7, 720x1280 portrait). 1-gang and 3-gang panels both have the slider device.
+- Home Assistant with a long-lived access token for the panel.
+- A photo source exposed as an HA `image` entity, e.g. the
+  immich_frames custom integration (give each display its own feed so they differ).
+
+## Install
+
+1. **Home Assistant:** copy `homeassistant/custom_components/panel_photo` into
+   `/config/custom_components/`, add a package like `homeassistant/packages/panel_photo.yaml`
+   (one `panels:` entry per Brilliant, `width: 720`, `height: 1280`), put a random
+   `panel_photo_key` in `secrets.yaml`, and restart HA.
+2. **Panel config:** copy `panel/config.example.js` to e.g. `kitchen.config.js` and fill in
+   the HA URL and token, the photo URL and version sensor, and your entities.
+3. **Install:**
+   ```sh
+   ./install.sh <panel-ip> kitchen.config.js America/Los_Angeles
+   ```
+4. **Uninstall** (back to stock Brilliant):
+   ```sh
+   ./uninstall.sh <panel-ip>
+   ```
+
+## Configuration
+
+All home-specific settings live in `config.js` on the panel (`panel/config.example.js` is
+documented). The main ones:
+
+| Key | What |
+|---|---|
+| `WS`, `TOKEN` | Home Assistant websocket URL and long-lived token |
+| `PHOTO`, `PHOTO_VERSION` | panel_photo URL for this panel and its version sensor |
+| `FEED` | optional immich_frames feed slug, for the photo caption and tap-for-next |
+| `SLIDERS`, `SLIDER_LIGHTS` | slider labels (top to bottom) and the light each dims |
+| `LOCKS` | `[[entity_id, "Name"], ...]` shown as a chip when unlocked |
+| `DELIVERY` | package box flag/lock/script, mail flag, "arriving today" sensors |
+| `DONE` | `{entity, states, icon, text}` alerts, e.g. "Washer is done" |
+| `WEATHER`, `CLOCK_24H`, `IDLE_MS` | weather entity, 24-hour clock, card auto-close |
+
+## Gotchas learned the hard way
+
+- `pkill -f "qmlscene ..."` over SSH matches the SSH shell's own command line and kills the
+  session mid-script. Use `pkill -x qmlscene`.
+- A hand-started offscreen `switch-ui` is not stopped by `systemctl stop switch_ui_app`;
+  stacking copies (~113 MB each) runs the panel out of memory.
+- Brilliant's `bootsplash.service` runs `fbi`, which lingers and fights for the framebuffer;
+  `install.sh` masks it (so boot shows black until HomeView starts).
+- QML: properties can't start with a capital letter or with `on` + capital (that's signal
+  handler syntax); `prop: { ... }; next: x` on one line is a syntax error.
+- Screenshot the panel: read `/sys/class/graphics/fb0/pan` for the visible page, then
+  `dd if=/dev/fb0 bs=2880 skip=<y> count=1280` (BGRA, 720x1280).
+
+## Layout
+
+```
+panel/
+  main.qml               the app
+  config.example.js      per-panel settings
+  hv_sliders.py          slider watcher + GPU keeper (stdlib Python)
+  fonts/                 Inter (OFL) + Material Design Icons (Apache 2.0)
+  system/                homeview.service, hv-sliders.service, switch_ui offscreen drop-in
+homeassistant/
+  custom_components/panel_photo/   photo renderer + server
+  packages/panel_photo.yaml        example config
+install.sh / uninstall.sh
+```
+
+## License
+
+MIT for this project's code. Inter is under the SIL Open Font License 1.1; Material Design
+Icons are under the Apache License 2.0.

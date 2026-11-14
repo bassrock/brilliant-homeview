@@ -1,0 +1,14 @@
+{
+  "domain": "panel_photo",
+  "name": "Panel Photo",
+  "codeowners": [],
+  "dependencies": [
+    "http",
+    "image"
+  ],
+  "documentation": "https://github.com/OWNER/brilliant-homeview",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.1.0",
+  "issue_tracker": "https://github.com/OWNER/brilliant-homeview/issues"
+}
