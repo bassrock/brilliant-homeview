@@ -87,7 +87,7 @@ Window {
     property string wxText: ""
     property string wxIcon: "weather-cloudy"
     property string capDate: "Memories"
-    property string capSub: "From Immich"
+    property string capSub: ""
     property bool capFav: false
     property string photoVer: "0"
     property var chips: []          // [{icon, color, text, act}]
@@ -116,7 +116,7 @@ Window {
         var m = d.match(/^(\d+) ([A-Za-z]+), (\d+)$/)
         capDate = m ? m[2] + " " + m[1] + ", " + m[3] : (d && d !== "unknown" ? d : "Memories")
         var loc = v("sensor." + feed + "_location") || ""
-        capSub = loc && loc !== "unknown" ? loc.split(",").slice(0, 2).join(",") : "From Immich"
+        capSub = loc && loc !== "unknown" && loc !== "unavailable" ? loc.split(",").slice(0, 2).join(",").trim() : ""   // where it was taken
         capFav = v("sensor." + feed + "_favourite") === "Yes"
         photoVer = v(photoVersionEntity) || photoVer
 
@@ -371,7 +371,7 @@ Window {
             Ico { name: root.capFav ? "heart" : "image-outline"; color: root.capFav ? "#FF6482" : "white"; anchors.verticalCenter: parent.verticalCenter }
             Column { anchors.verticalCenter: parent.verticalCenter
                 T { text: root.capDate; font.pixelSize: 30; font.weight: Font.DemiBold; width: Math.min(implicitWidth, 520); elide: Text.ElideRight }
-                T { text: root.capSub; font.pixelSize: 22; opacity: 0.82; width: Math.min(implicitWidth, 520); elide: Text.ElideRight } } }
+                T { text: root.capSub; visible: text !== ""; font.pixelSize: 22; opacity: 0.82; width: Math.min(implicitWidth, 520); elide: Text.ElideRight } } }
     }
 
     // ------------------------------------------------------------ action card (tap a chip)
