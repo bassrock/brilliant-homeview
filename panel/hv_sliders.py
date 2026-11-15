@@ -42,6 +42,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 EVENT = struct.Struct("llHHi")
+ABS_X, ABS_Y = 0x00, 0x01
 EV_ABS, ABS_MT_SLOT, ABS_MT_POSITION_X, ABS_MT_POSITION_Y, ABS_MT_TRACKING_ID = 3, 0x2F, 0x35, 0x36, 0x39
 
 # A short touch with little movement is a tap (Brilliant toggles the light). Reported as a
@@ -89,15 +90,24 @@ def reader():
         # again sends no new X, so positions must persist across contacts (resetting them
         # per touch made every repeat touch on a slider invisible). Seed from the device.
         slot, live, pos = 0, set(), {}
+        # 2-gang panels never send ABS_MT_POSITION_X for their touch slot; the slider number
+        # only arrives as single-touch ABS_X (and, like every axis, only when it changes).
+        st = {"x": None, "y": None}
         try:
             pos[0] = {"x": absval(fd, ABS_MT_POSITION_X), "y": absval(fd, ABS_MT_POSITION_Y)}
+            st["x"], st["y"] = absval(fd, ABS_X), absval(fd, ABS_Y)
         except OSError:
             pass
 
+        def xy(c):
+            return (c["x"] if c.get("x") else st["x"]), (c["y"] if c.get("y") is not None else st["y"])
+
         def emit(sl):
             c = pos.get(sl)
-            if sl in live and c and c["x"] is not None and c["y"] is not None:
-                publish(active=True, slider=max(0, c["x"] - 1), level=max(0, min(100, round(c["y"] / 10))))
+            if sl in live and c:
+                x, y = xy(c)
+                if x is not None and y is not None:
+                    publish(active=True, slider=max(0, x - 1), level=max(0, min(100, round(y / 10))))
 
         try:
             while True:
@@ -121,11 +131,16 @@ def reader():
                         else:
                             live.discard(slot)
                             c = pos.get(slot) or {}
+                            tx = xy(c)[0] if c else None
                             tap = (c.get("t0") is not None and time.monotonic() - c["t0"] < TAP_S
-                                   and c.get("ymax", 0) < TAP_MOVE and c.get("x") is not None)
-                            extra = {"taps": state["taps"] + 1, "tap_slider": max(0, c["x"] - 1)} if tap else {}
+                                   and c.get("ymax", 0) < TAP_MOVE and tx is not None)
+                            extra = {"taps": state["taps"] + 1, "tap_slider": max(0, tx - 1)} if tap else {}
                             if not live or extra:
                                 publish(active=bool(live), **extra)
+                    elif code in (ABS_X, ABS_Y):
+                        st["x" if code == ABS_X else "y"] = value
+                        if slot in live:
+                            emit(slot)
                     elif code in (ABS_MT_POSITION_X, ABS_MT_POSITION_Y):
                         c = pos.setdefault(slot, {"x": None, "y": None})
                         c["x" if code == ABS_MT_POSITION_X else "y"] = value
