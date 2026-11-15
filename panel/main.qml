@@ -29,7 +29,10 @@ Window {
         "weather-rainy":"F0597","weather-pouring":"F0596","weather-snowy":"F0598","weather-snowy-rainy":"F067F","weather-windy":"F059D",
         "weather-windy-variant":"F059E","weather-lightning":"F0593","weather-lightning-rainy":"F067E","weather-hail":"F0592",
         "play":"F040A","pause":"F03E4","skip-next":"F04AD","skip-previous":"F04AE","volume-high":"F057E","volume-minus":"F075E",
-        "volume-plus":"F075D","music":"F075A","television-play":"F0ECF","speaker":"F04C3"})
+        "volume-plus":"F075D","music":"F075A","television-play":"F0ECF","speaker":"F04C3",
+        "fan":"F0210","fan-off":"F081D","ceiling-light":"F0769","ceiling-fan-light":"F1798","lightbulb":"F0335","lightbulb-outline":"F0336",
+        "roller-shade":"F1A6B","roller-shade-closed":"F1A6C","thermostat":"F0393","minus":"F0374","plus":"F0415","fire":"F0238",
+        "snowflake":"F0717","power":"F0425"})
     function ic(n) { return String.fromCodePoint(parseInt(icons[n] || "F0590", 16)) }
     readonly property var cond: ({"fog":"Foggy","cloudy":"Cloudy","partlycloudy":"Partly Cloudy","sunny":"Sunny","clear-night":"Clear",
         "rainy":"Rain","pouring":"Heavy Rain","snowy":"Snow","snowy-rainy":"Snow","windy":"Windy","windy-variant":"Windy",
@@ -64,6 +67,13 @@ Window {
     function sliderEnt(i) { var c = ctlFor(i); return c ? c.entity : (sliderLights[i] || "") }
     // Now Playing: media players for this room, in priority order (first one playing wins).
     readonly property var mediaPlayers: cfg("MEDIA", [])
+    // Optional room card: tap the photo for this room's basics. ROOM = {name, controls: [{entity, name, icon,
+    // steps, labels}]}; entity may be a list (driven together, state from the first). Lights dim,
+    // shades set position, fans with `steps` get Off/Low/... buttons, climate gets -/+.
+    readonly property var room: cfg("ROOM", null)
+    readonly property var roomCtl: room && room.controls ? room.controls : []
+    function ids(c) { return c.entity }
+    function pri(c) { return typeof c.entity === "string" ? c.entity : c.entity[0] }
     readonly property string haHttp: cfg("HTTP", String(Cfg.WS).replace(/^ws/, "http").replace(/\/api\/websocket$/, ""))
     readonly property var ents: {
         var e = [weatherEntity]
@@ -77,6 +87,7 @@ Window {
         for (var q = 0; q < sliderCtl.length; q++) if (sliderCtl[q]) add(sliderCtl[q].entity)
         for (var mp = 0; mp < mediaPlayers.length; mp++) add(mediaPlayers[mp])
         for (var d = 0; d < doneAlerts.length; d++) add(doneAlerts[d].entity)
+        for (var r = 0; r < roomCtl.length; r++) [].concat(roomCtl[r].entity).forEach(add)
         return e
     }
 
@@ -99,6 +110,7 @@ Window {
     property int arrivingCount: 0
     readonly property var doneCard: card.indexOf("done:") === 0 ? doneAlerts[parseInt(card.slice(5))] : null
     property var np: null           // the room's now-playing media (see recompute)
+    property int stRev: 0           // bumps on every state event (the room card binds to it)
     function call(domain, service, data) {
         ws.sendTextMessage(JSON.stringify({ id: ++msgId, type: "call_service", domain: domain, service: service, service_data: data }))
     }
@@ -186,7 +198,7 @@ Window {
         minute.restart()
     }
     Timer { id: minute; repeat: false; onTriggered: root.tick() }
-    Component.onCompleted: tick()
+    Component.onCompleted: { tick(); card = cfg("START_CARD", "") }   // START_CARD: dev screenshots
 
     // ------------------------------------------------------------ HA websocket
     property int msgId: 1
@@ -225,6 +237,7 @@ Window {
             }
         }
         recompute()
+        stRev++
     }
 
     // ------------------------------------------------------------ photos (crossfade)
@@ -239,6 +252,9 @@ Window {
             opacity: root.frontA ? 0 : 1; Behavior on opacity { NumberAnimation { duration: 900 } }
             onStatusChanged: if (status === Image.Ready && root.frontA) { root.frontA = false; frost.source = root.photo("frost") } }
     Image { id: frost; width: 720; height: 1280; cache: false; asynchronous: true; opacity: 0 }
+    // Tap the photo itself (not a chip or the caption) for the room card.
+    MouseArea { anchors.fill: parent; enabled: !root.faceHidden && root.roomCtl.length > 0 && root.card === ""
+                onClicked: { root.card = "room"; cardTimer.restart() } }
 
     // ------------------------------------------------------------ components
     component Glass: ShaderEffect {
@@ -389,7 +405,7 @@ Window {
     }
     Item {
         anchors.fill: parent
-        visible: root.card !== "" && root.card !== "media"
+        visible: root.card !== "" && root.card !== "media" && root.card !== "room"
         Rectangle { anchors.fill: parent; color: "#8C000000" }
         MouseArea { anchors.fill: parent; onClicked: root.card = "" }
         Item {
@@ -514,6 +530,191 @@ Window {
                     visible: !!root.np && (root.np.vol === undefined || root.np.vol === null) && !!(root.np.feat & 1024)
                     RoundBtn { icon: "volume-minus"; onTapped: root.call("media_player", "volume_down", { entity_id: root.np.id }) }
                     RoundBtn { icon: "volume-plus"; onTapped: root.call("media_player", "volume_up", { entity_id: root.np.id }) } }
+                Btn { width: parent.width; label: "Done"; onTapped: root.card = "" }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ room card (tap the photo)
+    function lvlOf(c) {   // 0-100: brightness, fan speed, shade position
+        var e = pri(c), d = e.split(".")[0], s = v(e)
+        if (d === "cover") { var p = at(e, "current_position"); return p !== undefined && p !== null ? p : (s === "open" ? 100 : 0) }
+        if (s !== "on") return 0
+        if (d === "fan") return at(e, "percentage") || 100
+        var b = at(e, "brightness"); return b ? Math.max(1, Math.round(b * 100 / 255)) : 100
+    }
+    function setLvl(c, l) {
+        var d = pri(c).split(".")[0]
+        if (d === "cover") call("cover", "set_cover_position", { entity_id: ids(c), position: l })
+        else if (l <= 0) call(d, "turn_off", { entity_id: ids(c) })
+        else if (d === "fan") call("fan", "set_percentage", { entity_id: ids(c), percentage: l })
+        else call("light", "turn_on", { entity_id: ids(c), brightness_pct: l })
+    }
+    function toggleCtl(c) {
+        var e = pri(c), d = e.split(".")[0], s = v(e)
+        if (d === "cover") call("cover", s === "opening" || s === "closing" ? "stop_cover" : s === "closed" ? "open_cover" : "close_cover", { entity_id: ids(c) })
+        else call(d, s === "on" ? "turn_off" : "turn_on", { entity_id: ids(c) })
+    }
+    function canDim(c) {
+        var e = pri(c), d = e.split(".")[0]
+        if (d === "cover") return !!((at(e, "supported_features") || 0) & 4)
+        if (d === "light") { var m = at(e, "supported_color_modes") || []; return m.length > 0 && !(m.length === 1 && m[0] === "onoff") }
+        return false
+    }
+    function ctlIcon(c, on) {
+        if (c.icon) return c.icon
+        var d = pri(c).split(".")[0]
+        return d === "fan" ? (on ? "fan" : "fan-off") : d === "cover" ? (on ? "roller-shade" : "roller-shade-closed")
+             : d === "climate" ? "thermostat" : (on ? "lightbulb" : "lightbulb-outline")
+    }
+    function ctlState(c, l) {
+        var e = pri(c), d = e.split(".")[0], s = v(e)
+        if (s === undefined || s === "unavailable" || s === "unknown") return "Unavailable"
+        if (d === "cover") return s === "opening" ? "Opening" : s === "closing" ? "Closing" : l >= 100 ? "Open" : l <= 0 ? "Closed" : l + "% open"
+        if (d === "fan" && c.steps) { var k = c.steps.indexOf(snap(l, c.steps)); return s !== "on" ? "Off" : (c.labels ? c.labels[k] : l + "%") }
+        if (s !== "on") return "Off"
+        return canDim(c) ? l + "%" : "On"
+    }
+    component TileLabel: Row {
+        property string icon: ""
+        property string title: ""
+        property string sub: ""
+        property color fg: "white"
+        property color iconFg: fg
+        x: 32; anchors.verticalCenter: parent.verticalCenter; spacing: 22
+        Ico { name: parent.icon; color: parent.iconFg; font.pixelSize: 50; anchors.verticalCenter: parent.verticalCenter }
+        Column { anchors.verticalCenter: parent.verticalCenter
+            T { text: parent.parent.title; color: parent.parent.fg; font.pixelSize: 30; font.weight: Font.DemiBold }
+            T { text: parent.parent.sub; color: parent.parent.fg; font.pixelSize: 24; opacity: 0.8 } }
+    }
+    Item {
+        anchors.fill: parent
+        visible: root.card === "room"
+        Rectangle { anchors.fill: parent; color: "#8C000000" }
+        MouseArea { anchors.fill: parent; onClicked: root.card = "" }
+        Item {
+            id: roomBox
+            x: 32; width: 656; height: roomCol.implicitHeight + 72
+            anchors.verticalCenter: parent.verticalCenter
+            Glass { width: parent.width; height: parent.height; radius: 52; origin: Qt.point(roomBox.x, roomBox.y) }
+            MouseArea { anchors.fill: parent }
+            Column {
+                id: roomCol
+                x: 36; y: 36; width: parent.width - 72; spacing: 18
+                T { text: root.room && root.room.name ? root.room.name : "This Room"; font.pixelSize: 44; font.weight: Font.DemiBold; bottomPadding: 6 }
+                Repeater {
+                    model: root.card === "room" ? root.roomCtl : []
+                    Item {
+                        id: tile
+                        readonly property var c: modelData
+                        readonly property string ent: root.pri(c)
+                        readonly property string dom: ent.split(".")[0]
+                        readonly property bool stepped: dom === "fan" && !!c.steps
+                        readonly property string s: (root.stRev, root.v(ent) || "")
+                        readonly property bool ok: s !== "" && s !== "unavailable" && s !== "unknown"
+                        readonly property bool dims: (root.stRev, root.canDim(c))
+                        property int preview: -1
+                        readonly property int level: preview >= 0 ? preview : (root.stRev, root.lvlOf(c))
+                        readonly property bool lit: dom === "cover" ? level > 0 : s === "on"
+                        readonly property string title: c.name || root.at(ent, "friendly_name") || ent
+                        width: roomCol.width
+                        height: dom === "climate" ? 136 : stepped ? 196 : 124
+                        opacity: ok ? 1 : 0.45
+                        Timer { id: holdPreview; interval: 4000; onTriggered: tile.preview = -1 }
+
+                        // Lights, shades, on/off fans: one pill. Tap toggles, slide sets the level.
+                        Item {
+                            visible: tile.dom !== "climate" && !tile.stepped
+                            anchors.fill: parent
+                            Rectangle { id: pill; anchors.fill: parent; radius: 40; color: "#29FFFFFF"; border.width: 1; border.color: "#40FFFFFF" }
+                            TileLabel { icon: root.ctlIcon(tile.c, tile.lit); title: tile.title; sub: (root.stRev, root.ctlState(tile.c, tile.level)) }
+                            Item {
+                                clip: true; height: parent.height
+                                width: tile.lit ? (tile.dims ? Math.max(80, parent.width * tile.level / 100) : parent.width) : 0
+                                Rectangle { width: pill.width; height: pill.height; radius: 40; color: "#F2FFFFFF" }
+                                TileLabel { fg: "#1c1c1e"; iconFg: tile.dom === "light" ? "#FF9F0A" : tile.dom === "cover" ? "#0A84FF" : "#1c1c1e"
+                                            icon: root.ctlIcon(tile.c, tile.lit); title: tile.title; sub: (root.stRev, root.ctlState(tile.c, tile.level)) }
+                            }
+                            MouseArea {
+                                anchors.fill: parent; enabled: tile.ok
+                                property real x0: 0
+                                property int base: 0
+                                property bool dragging: false
+                                onPressed: { x0 = mouse.x; base = tile.level; dragging = false; cardTimer.restart() }
+                                onPositionChanged: {
+                                    if (!tile.dims) return
+                                    if (!dragging && Math.abs(mouse.x - x0) > 24) dragging = true
+                                    if (dragging) { holdPreview.stop(); tile.preview = Math.max(0, Math.min(100, Math.round(base + (mouse.x - x0) / width * 100))) }
+                                }
+                                onReleased: {
+                                    if (dragging) { root.setLvl(tile.c, tile.preview); holdPreview.restart() }
+                                    else root.toggleCtl(tile.c)
+                                    cardTimer.restart()
+                                }
+                            }
+                        }
+
+                        // Fans with steps: Off / Low / Medium / High.
+                        Item {
+                            visible: tile.stepped
+                            anchors.fill: parent
+                            Row { x: 8; height: 60; spacing: 14
+                                Ico { name: root.ctlIcon(tile.c, tile.lit); font.pixelSize: 40; anchors.verticalCenter: parent.verticalCenter }
+                                T { text: tile.title; font.pixelSize: 30; font.weight: Font.DemiBold; anchors.verticalCenter: parent.verticalCenter } }
+                            Row {
+                                id: seg
+                                y: 72; spacing: 12
+                                Repeater {
+                                    model: tile.stepped ? tile.c.steps : []
+                                    Rectangle {
+                                        readonly property bool on: tile.ok && root.snap(tile.s === "on" ? tile.level : 0, tile.c.steps) === modelData
+                                        width: (tile.width - 12 * (tile.c.steps.length - 1)) / tile.c.steps.length; height: 124; radius: 40
+                                        color: on ? "#F2FFFFFF" : "#29FFFFFF"; border.width: on ? 0 : 1; border.color: "#40FFFFFF"
+                                        T { anchors.centerIn: parent; font.pixelSize: 28; font.weight: Font.DemiBold; color: parent.on ? "#1c1c1e" : "white"
+                                            text: tile.c.labels ? tile.c.labels[index] : (modelData ? modelData + "%" : "Off") }
+                                        MouseArea { anchors.fill: parent; enabled: tile.ok
+                                            onClicked: { root.setLvl(tile.c, modelData); tile.preview = modelData; holdPreview.restart(); cardTimer.restart() } }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Thermostat: current temperature, target with - / +.
+                        Item {
+                            id: clim
+                            visible: tile.dom === "climate"
+                            anchors.fill: parent
+                            readonly property real cur: (root.stRev, parseFloat(root.at(tile.ent, "current_temperature")))
+                            readonly property real tgtHa: (root.stRev, parseFloat(root.at(tile.ent, "temperature")))
+                            readonly property real step: (root.stRev, parseFloat(root.at(tile.ent, "target_temp_step")) || 1)
+                            readonly property string act: (root.stRev, root.at(tile.ent, "hvac_action") || "")
+                            property real pending: NaN
+                            readonly property real tgt: isNaN(pending) ? tgtHa : pending
+                            Rectangle { anchors.fill: parent; radius: 40; color: "#29FFFFFF"; border.width: 1; border.color: "#40FFFFFF" }
+                            TileLabel {
+                                icon: clim.act === "heating" ? "fire" : clim.act === "cooling" ? "snowflake" : "thermostat"
+                                iconFg: clim.act === "heating" ? "#FF9F0A" : clim.act === "cooling" ? "#64D2FF" : "white"
+                                title: tile.title
+                                sub: "Now " + (isNaN(clim.cur) ? "--" : Math.round(clim.cur) + "°") + "  ·  " +
+                                     (tile.s === "off" ? "Off" : clim.act === "heating" ? "Heating" : clim.act === "cooling" ? "Cooling" : tile.s === "cool" ? "Cool" : tile.s === "heat" ? "Heat" : "Idle")
+                            }
+                            Row {
+                                anchors.right: parent.right; anchors.rightMargin: 16; anchors.verticalCenter: parent.verticalCenter; spacing: 6
+                                visible: tile.ok && tile.s !== "off" && !isNaN(clim.tgt)
+                                RoundBtn { icon: "minus"; width: 80; anchors.verticalCenter: parent.verticalCenter
+                                           onTapped: { clim.pending = clim.tgt - clim.step; climSend.restart() } }
+                                T { width: 86; horizontalAlignment: Text.AlignHCenter; anchors.verticalCenter: parent.verticalCenter
+                                    font.pixelSize: 48; font.weight: Font.DemiBold; text: Math.round(clim.tgt) + "°" }
+                                RoundBtn { icon: "plus"; width: 80; anchors.verticalCenter: parent.verticalCenter
+                                           onTapped: { clim.pending = clim.tgt + clim.step; climSend.restart() } }
+                            }
+                            Timer { id: climSend; interval: 1200
+                                    onTriggered: { root.call("climate", "set_temperature", { entity_id: root.ids(tile.c), temperature: clim.pending }); climClear.restart() } }
+                            Timer { id: climClear; interval: 5000; onTriggered: clim.pending = NaN }
+                        }
+                    }
+                }
+                Item { width: 1; height: 4 }
                 Btn { width: parent.width; label: "Done"; onTapped: root.card = "" }
             }
         }

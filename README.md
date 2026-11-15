@@ -6,7 +6,8 @@ large "attention" chips that only appear when something needs you: an unlocked d
 package waiting, the dryer finished. Tap a chip to act on it (lock the door, open the
 package box). Whatever the room's Apple TV or Sonos is playing shows as a Now Playing card
 with artwork; tap it for play/pause, skip, progress and volume. Touch a physical slider and
-a level indicator follows your finger.
+a level indicator follows your finger. Tap the photo itself for the room's basics: dim the
+lights, set the fan speed, move the shades, nudge the thermostat.
 
 The panel's **physical cap-touch sliders keep working exactly as before**: Brilliant's own
 app stays running, just invisibly.
@@ -95,6 +96,7 @@ documented). The main ones:
 | `DONE` | `{entity, states, icon, text}` alerts, e.g. "Washer is done" |
 | `WEATHER`, `CLOCK_24H`, `IDLE_MS` | weather entity, 24-hour clock, card auto-close |
 | `MEDIA` | Now Playing: media players in priority order (first playing wins) |
+| `ROOM` | tap-the-photo room card: `{name, controls: [{entity, name, icon, steps, labels}]}` (lights, shades, fans, climate) |
 | `SLIDER_CONTROL` | drive sliders Brilliant leaves unassigned (lights, stepped fans) |
 | `NIGHT`, `WAKE_MS` | optional `{start, end}` hours for a black screen + backlight off, and tap-to-wake time |
 

@@ -35,6 +35,17 @@ var SLIDER_LIGHTS = ["light.kitchen_island", "light.kitchen_cabinets", "light.ki
 // wins), e.g. an Apple TV (shows AirPlay too) and a Sonos. Artwork, progress, controls.
 var MEDIA = ["media_player.living_room_apple_tv", "media_player.kitchen_sonos"]
 
+// Optional room card: tap the photo for this room's basics. Lights: tap toggles, slide dims.
+// Shades: tap opens/closes (stops while moving), slide sets position. Fans with `steps` get
+// Off/Low/... buttons. Thermostats show the temperature with -/+ on the target.
+// `entity` may be a list to drive several together (state comes from the first).
+var ROOM = { name: "Kid's Room", controls: [
+    { entity: "light.ceiling_fan_light", name: "Fan Light", icon: "ceiling-fan-light" },
+    { entity: "fan.ceiling_fan", name: "Ceiling Fan", steps: [0, 33, 66, 100], labels: ["Off", "Low", "Medium", "High"] },
+    { entity: ["cover.left_shade", "cover.right_shade"], name: "Shades" },
+    { entity: "climate.upstairs", name: "Thermostat" },
+] }
+
 // Attention chips. Nothing shows when everything is fine.
 // Unlocked doors: tap the chip for Lock buttons.
 var LOCKS = [
