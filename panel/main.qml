@@ -94,7 +94,10 @@ Window {
     property var openLocks: []
     property string boxLock: "unknown"
     property bool boxInside: false
-    property string card: ""        // "" | "locks" | "box" | "media"
+    property string card: ""        // "" | "locks" | "box" | "mail" | "arriving" | "done:<i>" | "media"
+    property var dismissed: ({})    // done-alert entity -> state it was dismissed in
+    property int arrivingCount: 0
+    readonly property var doneCard: card.indexOf("done:") === 0 ? doneAlerts[parseInt(card.slice(5))] : null
     property var np: null           // the room's now-playing media (see recompute)
     function call(domain, service, data) {
         ws.sendTextMessage(JSON.stringify({ id: ++msgId, type: "call_service", domain: domain, service: service, service_data: data }))
@@ -131,11 +134,15 @@ Window {
         boxInside = !!delivery.box_flag && v(delivery.box_flag) === "on"
         boxLock = hasBox ? (v(delivery.box_lock) || "unknown") : "unknown"
         if (boxInside) out.push({ icon: "package-variant-closed", color: "#FFB340", act: hasBox ? "box" : "", text: delivery.box_text || "Package waiting" })
-        else if (delivery.mail_flag && v(delivery.mail_flag) === "on") out.push({ icon: "mailbox", color: "#64D2FF", act: "", text: "Mail is here" })
-        else if (arriving > 0) out.push({ icon: "truck-delivery", color: "#64D2FF", act: hasBox ? "box" : "", text: arriving + (arriving === 1 ? " delivery" : " deliveries") + " today" })
+        else if (delivery.mail_flag && v(delivery.mail_flag) === "on") out.push({ icon: "mailbox", color: "#64D2FF", act: "mail", text: "Mail is here" })
+        else if (arriving > 0) out.push({ icon: "truck-delivery", color: "#64D2FF", act: hasBox ? "box" : "arriving", text: arriving + (arriving === 1 ? " delivery" : " deliveries") + " today" })
+        arrivingCount = arriving
+        // "It's done" alerts: tap -> Got It hides the chip until that entity's state changes again.
         for (var d = 0; d < doneAlerts.length; d++) {
-            var al = doneAlerts[d]
-            if ((al.states || ["on"]).indexOf(v(al.entity)) >= 0) out.push({ icon: al.icon || "check-circle", color: al.color || "#30D158", text: al.text })
+            var al = doneAlerts[d], cur = v(al.entity)
+            if (dismissed[al.entity] !== undefined && dismissed[al.entity] !== cur) delete dismissed[al.entity]
+            if ((al.states || ["on"]).indexOf(cur) >= 0 && dismissed[al.entity] === undefined)
+                out.push({ icon: al.icon || "check-circle", color: al.color || "#30D158", text: al.text, act: "done:" + d })
         }
         if (JSON.stringify(out) !== JSON.stringify(chips)) chips = out
 
@@ -394,9 +401,14 @@ Window {
             Column {
                 id: cardCol
                 x: 36; y: 36; width: parent.width - 72; spacing: 18
-                T { text: root.card === "locks" ? "Doors" : (root.delivery.box_name || "Package Box"); font.pixelSize: 44; font.weight: Font.DemiBold }
+                T { font.pixelSize: 44; font.weight: Font.DemiBold
+                    text: root.card === "locks" ? "Doors" : root.card === "mail" ? "Mailbox" : root.card === "arriving" ? "Deliveries"
+                          : root.doneCard ? root.doneCard.text : (root.delivery.box_name || "Package Box") }
                 T { width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 26; opacity: 0.85
                     text: root.card === "locks" ? (root.openLocks.length ? root.openLocks.join(", ") + (root.openLocks.length === 1 ? " is" : " are") + " unlocked" : "All doors are locked")
+                          : root.card === "mail" ? "The mail has been delivered. Tap Picked Up once you've grabbed it."
+                          : root.card === "arriving" ? root.arrivingCount + (root.arrivingCount === 1 ? " delivery is" : " deliveries are") + " on the way today."
+                          : root.doneCard ? "Tap Got It to clear this until the next cycle."
                           : (root.boxInside ? "A package is waiting. Box is " + root.boxLock + "." : "Box is " + root.boxLock + ".") }
                 Repeater { model: root.card === "locks" ? root.openLocks : []
                     Btn { width: cardCol.width; label: "Lock " + modelData; onTapped: root.call("lock", "lock", { entity_id: root.lockId(modelData) }) } }
@@ -408,6 +420,10 @@ Window {
                       onHeld: root.call("lock", "unlock", { entity_id: root.delivery.box_lock }) }
                 Btn { visible: root.card === "box" && root.boxInside && !!root.delivery.picked_up_script; width: cardCol.width; label: "Mark Picked Up"
                       onTapped: root.call("script", "turn_on", { entity_id: root.delivery.picked_up_script }) }
+                Btn { visible: root.card === "mail"; width: cardCol.width; label: "Picked Up"
+                      onTapped: { root.call("input_boolean", "turn_off", { entity_id: root.delivery.mail_flag }); root.card = "" } }
+                Btn { visible: !!root.doneCard; width: cardCol.width; label: "Got It"
+                      onTapped: { var d = root.dismissed; d[root.doneCard.entity] = root.v(root.doneCard.entity); root.dismissed = d; root.card = ""; root.recompute() } }
                 Btn { width: cardCol.width; label: "Done"; onTapped: root.card = "" }
             }
         }
